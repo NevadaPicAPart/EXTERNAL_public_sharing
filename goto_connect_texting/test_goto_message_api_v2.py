@@ -4,29 +4,31 @@ by exchanging them for an access token, then calling the Send Message endpoint:
 https://developer.goto.com/guides/GoToConnect/18_HOW_useMessagingV2Api/
 
 Credentials file format (--credentials-file):
-    A JSON file containing an array of credential-combination objects to test, e.g.:
+    A JSON file containing a single object. This script reads the message_* keys (the
+    webhook_* keys are used by register_goto_webhook_channel.py), e.g.:
 
-    [
-        {
-            "label": "amy_v2_pt10",
-            "client_id": "",
-            "client_secret": "",
-            "personal_access_token": "",
-            "account_key": ""
-        }
-    ]
+    {
+        "message_client_id": "",
+        "message_client_secret": "",
+        "message_personal_access_token": "",
+        "message_account_key": "",
+        "message_from_number": "",
+        "message_to_number": ""
+    }
 
-    Each object requires:
-        label                   - a short name identifying this combination, used in
-                                   printed output and appended to the test message body.
-        client_id               - the OAuth client id, used as the Basic auth username
-                                   when requesting an access token.
-        client_secret           - the OAuth client secret, used as the Basic auth
-                                   password when requesting an access token.
-        personal_access_token   - the PAT exchanged for an access token via the
-                                   "personal_access_token" grant type.
-        account_key             - the GoTo Connect account key used in the Messaging V2
-                                   send URL.
+    Required keys:
+        message_client_id               - the OAuth client id, used as the Basic auth
+                                          username when requesting an access token.
+        message_client_secret           - the OAuth client secret, used as the Basic auth
+                                          password when requesting an access token.
+        message_personal_access_token   - the PAT exchanged for an access token via the
+                                          "personal_access_token" grant type.
+        message_account_key             - the GoTo Connect account key used in the
+                                          Messaging V2 send URL.
+        message_from_number             - the GoTo Connect number sending the message,
+                                          E.164 format, e.g. +17025550100.
+        message_to_number               - the number receiving the message, E.164 format,
+                                          e.g. +17025550101.
 """
 
 import argparse
@@ -35,35 +37,43 @@ import json
 import requests
 
 CREDENTIALS_FILE_HELP = """Credentials file format:
-A JSON file containing an array of credential-combination objects to test, e.g.:
+A JSON file containing a single object, e.g.:
 
-[
-    {
-        "label": "amy_v2_pt10",
-        "client_id": "",
-        "client_secret": "",
-        "personal_access_token": "",
-        "account_key": ""
-    }
-]
+{
+    "message_client_id": "",
+    "message_client_secret": "",
+    "message_personal_access_token": "",
+    "message_account_key": "",
+    "message_from_number": "",
+    "message_to_number": ""
+}
 
-Each object requires:
-  label                 - a short name identifying this combination, used in printed
-                            output and appended to the test message body.
-  client_id              - the OAuth client id, used as the Basic auth username when
-                            requesting an access token.
-  client_secret           - the OAuth client secret, used as the Basic auth password
-                            when requesting an access token.
-  personal_access_token   - the PAT exchanged for an access token via the
-                            "personal_access_token" grant type.
-  account_key             - the GoTo Connect account key used in the Messaging V2
-                            send URL.
+Required keys:
+  message_client_id               - the OAuth client id, used as the Basic auth username
+                                    when requesting an access token.
+  message_client_secret           - the OAuth client secret, used as the Basic auth
+                                    password when requesting an access token.
+  message_personal_access_token   - the PAT exchanged for an access token via the
+                                    "personal_access_token" grant type.
+  message_account_key             - the GoTo Connect account key used in the Messaging V2
+                                    send URL.
+  message_from_number             - the GoTo Connect number sending the message, E.164
+                                    format, e.g. +17025550100.
+  message_to_number               - the number receiving the message, E.164 format,
+                                    e.g. +17025550101.
 """
 
-DEFAULT_CREDENTIALS_FILE = "../../api_tokens/live/pt10/goto_connect_credentials.json"
+DEFAULT_CREDENTIALS_FILE = "goto_connect_credentials.json"
 
-OWNER_PHONE_NUMBER = "+17025837850"     # the GoTo Connect number sending the message
-CONTACT_PHONE_NUMBER = "+19452108869"     # the number receiving the message
+REQUIRED_KEYS = [
+    "message_client_id",
+    "message_client_secret",
+    "message_personal_access_token",
+    "message_account_key",
+    "message_from_number",
+    "message_to_number",
+]
+
 MESSAGE_BODY = "Test message from experimental script"
 
 TOKEN_URL = "https://authentication.logmeininc.com/oauth/token"
@@ -94,15 +104,15 @@ def get_access_token(client_id, client_secret, personal_access_token):
     return response_json.get("access_token")
 
 
-def send_test_message(access_token, account_key, label):
+def send_test_message(access_token, account_key, from_number, to_number):
     # Messaging V2 expects multipart/form-data with a JSON "request" part;
     # requests sets the multipart Content-Type itself when given `files`.
     headers = {"Authorization": f"Bearer {access_token}"}
 
     request_json = {
         "channel": "SMS",
-        "from": OWNER_PHONE_NUMBER,
-        "to": [CONTACT_PHONE_NUMBER],
+        "from": from_number,
+        "to": [to_number],
         "type": "simple",
         "components": [
             {
@@ -110,20 +120,31 @@ def send_test_message(access_token, account_key, label):
                 "components": [
                     {
                         "type": "text",
-                        "attributes": {"text": MESSAGE_BODY + label},
+                        "attributes": {"text": MESSAGE_BODY},
                     }
                 ],
             }
         ],
     }
 
+    url = API_URL.format(account_key=account_key)
+
+    # The access token is redacted so the printed request is safe to share.
+    print(f"Send message request: POST {url}")
+    print("Send message request headers:")
+    print(json.dumps({**headers, "Authorization": "Bearer <redacted>"}, indent=2))
+    print('Send message request body (multipart/form-data, part "request", application/json):')
+    print(json.dumps(request_json, indent=2))
+
     response = requests.post(
-        API_URL.format(account_key=account_key),
+        url,
         headers=headers,
         files={"request": (None, json.dumps(request_json), "application/json")},
     )
 
     print(f"Send message status code: {response.status_code}")
+    print("Send message response headers:")
+    print(json.dumps(dict(response.headers), indent=2))
     try:
         print("Send message response JSON:")
         print(response.json())
@@ -140,23 +161,29 @@ if __name__ == "__main__":
     parser.add_argument(
         "--credentials-file",
         default=DEFAULT_CREDENTIALS_FILE,
-        help="Path to the JSON file containing the credential combinations to test "
+        help="Path to the JSON file containing the credentials "
         "(see format description below). Default: %(default)s",
     )
     args = parser.parse_args()
 
     with open(args.credentials_file, "r", encoding="utf-8") as f:
-        credential_combinations = json.load(f)
+        credentials = json.load(f)
 
-    for combination in credential_combinations:
-        print(f"\n===== Testing {combination['label']} =====")
-        token = get_access_token(
-            combination["client_id"],
-            combination["client_secret"],
-            combination["personal_access_token"],
-        )
-        if not token:
-            print("No access token received - not attempting to send message.")
-            continue
+    missing_keys = [k for k in REQUIRED_KEYS if not credentials.get(k)]
+    if missing_keys:
+        raise SystemExit(f"Credentials file is missing/empty keys: {', '.join(missing_keys)}")
 
-        send_test_message(token, combination["account_key"], combination['label'])
+    token = get_access_token(
+        credentials["message_client_id"],
+        credentials["message_client_secret"],
+        credentials["message_personal_access_token"],
+    )
+    if not token:
+        raise SystemExit("No access token received - not attempting to send message.")
+
+    send_test_message(
+        token,
+        credentials["message_account_key"],
+        credentials["message_from_number"],
+        credentials["message_to_number"],
+    )
